@@ -17,13 +17,16 @@ n_L1 <- 25        # about 25 students per class
 
 library(dplyr)
 library(lme4)
-library(mediation)
+# library(mediation)
+library(multilevelmediation)
+# library(boot)
 
 
 results_power <- data.frame(
-  iteration    = numeric(),
-  medi_eff_est = numeric(),
-  medi_eff_p   = numeric()
+  iteration         = numeric(),
+  medi_eff_est      = numeric(),
+  medi_eff_ci_lower = numeric(),
+  medi_eff_ci_upper = numeric()
 )
 
 for(i in 1:10){
@@ -57,22 +60,34 @@ for(i in 1:10){
   
   
   ## Taken from
-  # Tingley, D., Yamamoto, T., Hirose, K., Keele, L., & Imai, K. (2014). mediation: R Package for Causal Mediation   Analysis. Journal of Statistical Software, 59(5), 1–38. https://doi.org/10.18637/jss.v059.i05
-  # https://stats.stackexchange.com/questions/491503/mediation-analysis-for-mixed-models
+  # multilevelmediation package
+  # ALTERNATIVE IS mlma package: https://cran.r-project.org/web/packages/mlma/vignettes/MLMAvignette.html
+  boot_result <- boot.modmed.mlm.custom(data, 
+                         nrep = 10,    # increase to 1000
+                         L2ID = "class_id", 
+                         X = "X",
+                         Y = "Y",
+                         M = "M",
+                         seed=1234)
   
-  fit.totaleffect <- lme4::lmer(Y ~ X + (1| class_id), data = data)
-  fit.mediator    <- lme4::lmer(M ~ X + (1| class_id), data = data)
-  fit.dv          <- lme4::lmer(Y ~ M + X + (1| class_id), data = data)
+  # get indirect effect
+  boot_result_ci <- extract.boot.modmed.mlm(boot_result, type="indirect", ci.conf=.95)
   
-  results <- mediation::mediate(fit.mediator, fit.dv, treat='X', mediator='M')
   
   results_power <- results_power %>%
     add_row(iteration    = i,
-            medi_eff_est = results$d.avg,
-            medi_eff_p   = results$d.avg.p)
+            medi_eff_est = boot_result_ci$est,
+            medi_eff_ci_lower   = boot_result_ci$CI["2.5%"],
+            medi_eff_ci_upper   = boot_result_ci$CI["97.5%"])
 }
 
 # Power for mediation (indirect) effect
 results_power %>%
-  mutate(sign = ifelse(medi_eff_p <= .05, 1, 0)) %>%
+  mutate(sign = case_when(
+                  medi_eff_ci_lower > 0 & medi_eff_ci_upper > 0 ~ 1,
+                  medi_eff_ci_lower < 0 & medi_eff_ci_upper < 0 ~ 1,
+                  TRUE ~ 0)) %>%
   summarize(power = mean(sign))
+
+
+
